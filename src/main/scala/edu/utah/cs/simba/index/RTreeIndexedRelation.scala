@@ -35,7 +35,7 @@ private[simba] case class RTreeIndexedRelation(output: Seq[Attribute], child: Sp
   var isPoint = false
 
   private def checkKeys: Boolean = {
-    if (column_keys.length > 1) {
+    if (column_keys.length >= 1) {
       for (i <- column_keys.indices)
         if (!column_keys(i).dataType.isInstanceOf[NumericType]) {
           return false

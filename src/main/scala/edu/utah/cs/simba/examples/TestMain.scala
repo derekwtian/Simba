@@ -27,7 +27,7 @@ import scala.collection.mutable.ListBuffer
   * Created by dongx on 11/14/2016.
   */
 object TestMain {
-  case class PointData(id: String, x: Double, y: Double, t: Long)
+  case class PointData(id: String, x: Double, y: Double, t: Double)
 
   def main(args: Array[String]): Unit = {
     var PointRDDNumPartitions = 5
@@ -48,50 +48,48 @@ object TestMain {
     val sparkConf = new SparkConf().setAppName("SpatialOperationExample")
       .setMaster("local")
     val sc = new SparkContext(sparkConf)
-//    val spark = SparkSession
-//      .builder()
-//      .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-//      .master("local[*]")
-//      .getOrCreate()
-//    val sc = spark.sparkContext
     val simbaContext = new SimbaContext(sc)
 
     Logger.getLogger("org").setLevel(Level.WARN)
     Logger.getLogger("akka").setLevel(Level.WARN)
 
-    var leftData = ListBuffer[PointData]()
+    //var leftData = ListBuffer[PointData]()
     var rightData = ListBuffer[PointData]()
 
     import simbaContext.implicits._
     import simbaContext.SimbaImplicits._
 
-    var total = 0
-
     println(s"Input Data File: $PointRDDInputLocation, $PointRDDNumPartitions")
     val pointRDD = sc.textFile(PointRDDInputLocation, PointRDDNumPartitions)
-    pointRDD.map(line => {
-      total += 1
+    println(pointRDD.count())
+    val leftData = pointRDD.map(line => {
       val items = line.split(",")
-      leftData += PointData(items(0), items(3).toDouble, items(2).toDouble, items(1).toLong)
+      PointData(items(0), items(3).toDouble, items(2).toDouble, items(1).toDouble)
     })
-    println(total, leftData.result().size)
+    println(leftData.count())
 
 
-    val leftDF = sc.parallelize(leftData).toDF
+    val leftDF = leftData.toDF
     val rightDF = sc.parallelize(rightData).toDF
 
     leftDF.registerTempTable("point1")
+    //simbaContext.indexTable("point1", RTreeType, "rt1", Array("x","y"))
+    simbaContext.indexTable("point1", RTreeType, "rt2", Array("t"))
+    //val indexInfo = simbaContext.indexManager.getIndexInfo(0).
 
-    //simbaContext.sql("SELECT * FROM point1 WHERE x < 10").collect().foreach(println)
+
+    val df = simbaContext.sql("SELECT * FROM point1 WHERE x <= -118.23 and x >= -118.28 and y >= 33.68 and y <= 33.73 and t  <=1549033000 and t>=1549022168")//.collect().foreach(println)
+    df.explain(true)
+    df.show()
 
 //    simbaContext.indexTable("point1", RTreeType, "rt", List("x", "y"))
-    leftDF.index(RTreeType, "rt", Array("x", "y"))
+    //leftDF.index(RTreeType, "rt", Array("x", "y"))
 
 //    val df = leftDF.knn(Array("x", "y"), Array(10.0, 10), 3)
 //    println(df.queryExecution)
 //    df.show()
 
-    leftDF.range(Array("x", "y"), Array(-118.28, -118.23), Array(33.68, 33.73)).show()
+    //leftDF.range(Array("x", "y"), Array(-118.28, -118.23), Array(33.68, 33.73)).show()
 //
 //    leftDF.knnJoin(rightDF, Array("x", "y"), Array("x", "y"), 3).show(100)
 
