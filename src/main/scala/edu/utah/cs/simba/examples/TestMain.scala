@@ -44,8 +44,10 @@ object TestMain {
     (-118.50, -118.00, 33.46, 33.96)
   )
 
+  var count = 0L
+
   def main(args: Array[String]): Unit = {
-    var PointRDDNumPartitions = 5
+    var PointRDDNumPartitions = 1024
     var PointRDDInputLocation = "file:///Users/tianwei/Projects/data/ais_small.csv"
 
     if (args.length > 0) {
@@ -61,10 +63,9 @@ object TestMain {
     }
 
     val sparkConf = new SparkConf().setAppName("SimbaAISExperiment")
-      .setMaster("local")
+      .setMaster("spark://localhost:7077")
     val sc = new SparkContext(sparkConf)
     val simbaContext = new SimbaContext(sc)
-
     Logger.getLogger("org").setLevel(Level.WARN)
     Logger.getLogger("akka").setLevel(Level.WARN)
 
@@ -80,9 +81,9 @@ object TestMain {
     val leftDF = pointRDD.map(line => {
       val items = line.split(",")
       PointData(items(0), items(3).toDouble, items(2).toDouble, items(1).toLong * 1000)
-    }).toDF()
-    leftDF.persist(StorageLevel.MEMORY_ONLY)
-    println(s"<Simba> Generate DataFrame, use time ${System.currentTimeMillis() - start}ms")
+    }).repartition(PointRDDNumPartitions).toDF()
+    count = leftDF.count()
+    println(s"<Simba> Generate DataFrame, use time ${System.currentTimeMillis() - start}ms, $count")
 
 
     val rightDF = sc.parallelize(rightData).toDF
@@ -90,6 +91,12 @@ object TestMain {
     start = System.currentTimeMillis()
     leftDF.registerTempTable("point1")
     println(s"<Simba> Table Register, use time ${System.currentTimeMillis() - start}ms")
+    simbaContext.indexTable("point1", RTreeType, "RTree", Array("x", "y"))
+
+    //dry run
+    for (i <- 1 to 20) {
+      val count1 = simbaContext.sql("SELECT * FROM point1 WHERE x >= -180 and x <= 180 and y >= -90 and y <= 90").rdd.count()
+    }
 
     testIDTQuery(simbaContext)
     testSRQuery(simbaContext)
@@ -112,10 +119,11 @@ object TestMain {
     leftDF.knnJoin(rightDF, Array("x", "y"), Array("x", "y"), 3).show(100)*/
 
     sc.stop()
-    println("All Simba finished!")
+    println("All Simba Measurements finished!")
   }
 
   def testIDTQuery(simbaContext: SimbaContext): Unit = {
+    simbaContext.clearIndex()
     println("=========Test ID-Temporal Query=========")
     var start = System.currentTimeMillis()
     simbaContext.indexTable("point1", RTreeType, "idt", Array("t"))
@@ -126,16 +134,21 @@ object TestMain {
       println(query)
       val sql = "SELECT * FROM point1 WHERE t>=" + DateTime.format2Stamp(startTime) + " and t<=" + DateTime.format2Stamp(query) + " and id='" + id + "'"
       println(s"ID-Temporal Range: $sql")
+
+      var resultSize = 0L
+      val t0 = System.currentTimeMillis()
       for (i <- 1 to eachQueryLoopTimes) {
-        start = System.currentTimeMillis()
-        val result = simbaContext.sql(sql).collect()
-        println(s"<Simba> ID-Temporal Query finished, use time ${System.currentTimeMillis() - start}ms, ${result.length}")
+        resultSize = simbaContext.sql(sql).rdd.count()
       }
+      val t1 = System.currentTimeMillis()
+
+      println("Selection Ratio (%): " + ((resultSize * 100.0) / count))
+      println(s"<Simba> ID-Temporal Query finished, use time ${(t1 - t0) / eachQueryLoopTimes}ms, $resultSize")
     })
-    simbaContext.clearIndex()
   }
 
   def testSRQuery(simbaContext: SimbaContext): Unit = {
+    simbaContext.clearIndex()
     println("=========Test Spatial Range Query=========")
     var start = System.currentTimeMillis()
     simbaContext.indexTable("point1", RTreeType, "rt", Array("x", "y"))
@@ -146,16 +159,21 @@ object TestMain {
       println(query)
       val sql = "SELECT * FROM point1 WHERE x>=" + query._1 + " and x<=" + query._2 + " and y>=" + query._3 + " and y<=" + query._4
       println(s"Spatial Range: $sql")
+
+      var resultSize = 0L
+      val t0 = System.currentTimeMillis()
       for (i <- 1 to eachQueryLoopTimes) {
-        start = System.currentTimeMillis()
-        val result = simbaContext.sql(sql).collect()
-        println(s"<Simba> Spatial Range Query finished, use time ${System.currentTimeMillis() - start}ms, ${result.length}")
+        resultSize = simbaContext.sql(sql).rdd.count()
       }
+      val t1 = System.currentTimeMillis()
+
+      println("Selection Ratio (%): " + ((resultSize * 100.0) / count))
+      println(s"<Simba> Spatial Range Query finished, use time ${(t1 - t0) / eachQueryLoopTimes}ms, $resultSize")
     })
-    simbaContext.clearIndex()
   }
 
   def testSTQuery(simbaContext: SimbaContext): Unit = {
+    simbaContext.clearIndex()
     println("=========Test Spatial-Temporal Range Query=========")
     var start = System.currentTimeMillis()
     simbaContext.indexTable("point1", RTreeType, "st", Array("x", "y", "t"))
@@ -167,14 +185,17 @@ object TestMain {
         println(tquery, query)
         val sql = "SELECT * FROM point1 WHERE x>=" + query._1 + " and x<=" + query._2 + " and y>=" + query._3 + " and y<=" + query._4 + " and t>=" + DateTime.format2Stamp(startTime) + " and t<=" + DateTime.format2Stamp(tquery)
         println(s"Spatial Range: $sql")
+
+        var resultSize = 0L
+        val t0 = System.currentTimeMillis()
         for (i <- 1 to eachQueryLoopTimes) {
-          start = System.currentTimeMillis()
-          val result = simbaContext.sql(sql).collect()
-          println(s"<Simba> Spatial-Temporal Range Query finished, use time ${System.currentTimeMillis() - start}ms, ${result.length}")
+          resultSize = simbaContext.sql(sql).rdd.count()
         }
+        val t1 = System.currentTimeMillis()
+
+        println("Selection Ratio (%): " + ((resultSize * 100.0) / count))
+        println(s"<Simba> Spatial-Temporal Range Query finished, use time ${(t1 - t0) / eachQueryLoopTimes}ms, $resultSize")
       })
     })
-
-    simbaContext.clearIndex()
   }
 }
